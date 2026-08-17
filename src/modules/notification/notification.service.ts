@@ -1,10 +1,18 @@
-import { Types } from "mongoose";
-import { Notification, NotificationType } from "../../db";
+import { prisma } from "../../db";
+
+export type NotificationType =
+  | "FRIEND_REQUEST"
+  | "FRIEND_ACCEPTED"
+  | "GOAL_INVITATION"
+  | "GOAL_ACCEPTED"
+  | "GOAL_CONTRIBUTION"
+  | "GOAL_MILESTONE"
+  | "SYSTEM";
 
 export interface CreateNotificationParams {
-  recipient: string | Types.ObjectId;
-  sender: string | Types.ObjectId;
-  type: NotificationType;
+  recipientId: string;
+  senderId?: string;
+  type: string;
   title: string;
   message: string;
   data?: Record<string, any>;
@@ -12,18 +20,17 @@ export interface CreateNotificationParams {
 
 export class NotificationService {
   async createNotification(params: CreateNotificationParams) {
-    const notification = new Notification({
-      recipient: new Types.ObjectId(params.recipient.toString()),
-      sender: new Types.ObjectId(params.sender.toString()),
-      type: params.type,
-      title: params.title,
-      message: params.message,
-      data: params.data || {},
-      isRead: false,
+    return await prisma.notification.create({
+      data: {
+        recipientId: params.recipientId,
+        senderId: params.senderId,
+        type: params.type,
+        title: params.title,
+        message: params.message,
+        data: params.data ? JSON.stringify(params.data) : null,
+        isRead: false,
+      },
     });
-
-    await notification.save();
-    return notification;
   }
 
   async getUserNotifications(
@@ -39,34 +46,51 @@ export class NotificationService {
     const limit = Math.min(50, Math.max(1, options.limit || 20));
     const skip = (page - 1) * limit;
 
-    const query: any = {
-      recipient: new Types.ObjectId(userId),
+    const where: any = {
+      recipientId: userId,
     };
 
     if (options.unreadOnly) {
-      query.isRead = false;
+      where.isRead = false;
     }
 
     if (options.type) {
-      query.type = options.type;
+      where.type = options.type;
     }
 
     const [notifications, total, unreadCount] = await Promise.all([
-      Notification.find(query)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .populate("sender", "name username email image")
-        .lean(),
-      Notification.countDocuments(query),
-      Notification.countDocuments({
-        recipient: new Types.ObjectId(userId),
-        isRead: false,
+      prisma.notification.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+        include: {
+          sender: {
+            select: { id: true, name: true, username: true, email: true, image: true },
+          },
+        },
+      }),
+      prisma.notification.count({ where }),
+      prisma.notification.count({
+        where: { recipientId: userId, isRead: false },
       }),
     ]);
 
     return {
-      notifications,
+      notifications: notifications.map((n) => {
+        let parsedData = null;
+        if (n.data) {
+          try {
+            parsedData = typeof n.data === "string" ? JSON.parse(n.data) : n.data;
+          } catch {
+            parsedData = n.data;
+          }
+        }
+        return {
+          ...n,
+          data: parsedData,
+        };
+      }),
       pagination: {
         page,
         limit,
@@ -78,59 +102,50 @@ export class NotificationService {
   }
 
   async getUnreadCount(userId: string): Promise<number> {
-    return Notification.countDocuments({
-      recipient: new Types.ObjectId(userId),
-      isRead: false,
+    return prisma.notification.count({
+      where: { recipientId: userId, isRead: false },
     });
   }
 
   async markAsRead(userId: string, notificationId: string) {
-    const notification = await Notification.findOneAndUpdate(
-      {
-        _id: new Types.ObjectId(notificationId),
-        recipient: new Types.ObjectId(userId),
-      },
-      {
-        isRead: true,
-        readAt: new Date(),
-      },
-      { new: true }
-    );
+    const notification = await prisma.notification.findFirst({
+      where: { id: notificationId, recipientId: userId },
+    });
 
     if (!notification) {
       throw new Error("Notification not found");
     }
 
-    return notification;
+    return await prisma.notification.update({
+      where: { id: notificationId },
+      data: { isRead: true },
+    });
   }
 
   async markAllAsRead(userId: string) {
-    const result = await Notification.updateMany(
-      {
-        recipient: new Types.ObjectId(userId),
-        isRead: false,
-      },
-      {
-        isRead: true,
-        readAt: new Date(),
-      }
-    );
+    const result = await prisma.notification.updateMany({
+      where: { recipientId: userId, isRead: false },
+      data: { isRead: true },
+    });
 
     return {
       message: "All notifications marked as read",
-      modifiedCount: result.modifiedCount,
+      modifiedCount: result.count,
     };
   }
 
   async deleteNotification(userId: string, notificationId: string) {
-    const result = await Notification.findOneAndDelete({
-      _id: new Types.ObjectId(notificationId),
-      recipient: new Types.ObjectId(userId),
+    const notification = await prisma.notification.findFirst({
+      where: { id: notificationId, recipientId: userId },
     });
 
-    if (!result) {
+    if (!notification) {
       throw new Error("Notification not found");
     }
+
+    await prisma.notification.delete({
+      where: { id: notificationId },
+    });
 
     return {
       message: "Notification deleted successfully",
