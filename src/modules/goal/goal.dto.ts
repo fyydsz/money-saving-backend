@@ -1,12 +1,12 @@
 import { t } from "elysia";
-import { GOAL_CATEGORIES } from "../../db";
+import { GOAL_CATEGORIES } from "./goal.service";
 
 export const CreateGoalDto = t.Object({
   title: t.String({ minLength: 1, maxLength: 100 }),
   description: t.Optional(t.String({ maxLength: 500 })),
   targetAmount: t.Number({ minimum: 1 }),
   category: t.Optional(
-    t.Union(GOAL_CATEGORIES.map((cat) => t.Literal(cat)) as any)
+    t.Union(GOAL_CATEGORIES.map((cat: string) => t.Literal(cat)) as any)
   ),
   icon: t.Optional(t.String({ maxLength: 10 })),
   deadline: t.Optional(t.String()),
@@ -19,7 +19,7 @@ export const UpdateGoalDto = t.Object({
   description: t.Optional(t.String({ maxLength: 500 })),
   targetAmount: t.Optional(t.Number({ minimum: 1 })),
   category: t.Optional(
-    t.Union(GOAL_CATEGORIES.map((cat) => t.Literal(cat)) as any)
+    t.Union(GOAL_CATEGORIES.map((cat: string) => t.Literal(cat)) as any)
   ),
   icon: t.Optional(t.String({ maxLength: 10 })),
   deadline: t.Optional(t.String()),

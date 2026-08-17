@@ -1,13 +1,24 @@
-import { Types } from "mongoose";
-import {
-  Goal,
-  GoalMember,
-  Friendship,
-  User,
-  GoalCategory,
-  Account,
-} from "../../db";
+import { prisma } from "../../db";
 import { NotificationService } from "../notification/notification.service";
+
+export type GoalCategory =
+  | "couple"
+  | "travel"
+  | "emergency"
+  | "gadget"
+  | "investment"
+  | "education"
+  | "general";
+
+export const GOAL_CATEGORIES: GoalCategory[] = [
+  "couple",
+  "travel",
+  "emergency",
+  "gadget",
+  "investment",
+  "education",
+  "general",
+];
 
 export interface CreateGoalParams {
   title: string;
@@ -28,38 +39,46 @@ export class GoalService {
   }
 
   async createGoal(creatorId: string, params: CreateGoalParams) {
-    const creatorObjId = new Types.ObjectId(creatorId);
+    const isShared = Boolean(
+      params.isShared && params.invitedFriendIds && params.invitedFriendIds.length > 0
+    );
 
-    const isShared = Boolean(params.isShared && params.invitedFriendIds && params.invitedFriendIds.length > 0);
-
-    const goal = new Goal({
-      title: params.title.trim(),
-      description: params.description?.trim(),
-      targetAmount: params.targetAmount,
-      currentAmount: 0,
-      category: params.category || "general",
-      icon: params.icon || "🎯",
-      deadline: params.deadline ? new Date(params.deadline) : undefined,
-      creator: creatorObjId,
-      isShared,
-      status: "active",
+    const goal = await prisma.goal.create({
+      data: {
+        title: params.title.trim(),
+        description: params.description?.trim(),
+        targetAmount: params.targetAmount,
+        currentAmount: 0,
+        category: params.category || "general",
+        icon: params.icon || "🎯",
+        deadline: params.deadline ? new Date(params.deadline) : undefined,
+        creatorId,
+        isShared,
+        status: "active",
+        members: {
+          create: {
+            userId: creatorId,
+            role: "creator",
+            status: "accepted",
+            totalContributed: 0,
+          },
+        },
+      },
+      include: {
+        creator: {
+          select: { name: true, username: true, email: true, image: true },
+        },
+        members: {
+          include: {
+            user: { select: { name: true, username: true, email: true, image: true } },
+          },
+        },
+      },
     });
-
-    await goal.save();
-
-    // Register creator as accepted creator member
-    const creatorMember = new GoalMember({
-      goalId: goal._id,
-      userId: creatorObjId,
-      role: "creator",
-      status: "accepted",
-      totalContributed: 0,
-    });
-    await creatorMember.save();
 
     // If shared, invite friends
     if (isShared && params.invitedFriendIds && params.invitedFriendIds.length > 0) {
-      await this.inviteMembers(creatorId, goal._id.toString(), params.invitedFriendIds, goal);
+      await this.inviteMembers(creatorId, goal.id, params.invitedFriendIds, goal);
     }
 
     return goal;
@@ -69,80 +88,84 @@ export class GoalService {
     userId: string,
     filter: { status?: string; isShared?: boolean } = {}
   ) {
-    const userObjId = new Types.ObjectId(userId);
-
-    // Find all goals where user is an accepted member
-    const userMemberships = await GoalMember.find({
-      userId: userObjId,
-      status: "accepted",
-    }).select("goalId");
+    const userMemberships = await prisma.goalMember.findMany({
+      where: {
+        userId,
+        status: "accepted",
+      },
+      select: { goalId: true },
+    });
 
     const goalIds = userMemberships.map((m) => m.goalId);
 
-    const query: any = {
-      _id: { $in: goalIds },
+    const where: any = {
+      id: { in: goalIds },
     };
 
     if (filter.status) {
-      query.status = filter.status;
+      where.status = filter.status;
     }
     if (typeof filter.isShared === "boolean") {
-      query.isShared = filter.isShared;
+      where.isShared = filter.isShared;
     }
 
-    const goals = await Goal.find(query)
-      .sort({ createdAt: -1 })
-      .populate("creator", "name username email image")
-      .lean();
+    const goals = await prisma.goal.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      include: {
+        creator: {
+          select: { name: true, username: true, email: true, image: true },
+        },
+        members: {
+          include: {
+            user: { select: { id: true, name: true, username: true, email: true, image: true } },
+          },
+        },
+      },
+    });
 
-    // Attach members details for each goal
-    const result = await Promise.all(
-      goals.map(async (g) => {
-        const members = await GoalMember.find({ goalId: g._id })
-          .populate("userId", "name username email image")
-          .lean();
+    return goals.map((g) => {
+      const progressPercent = Math.min(
+        100,
+        Math.round((g.currentAmount / g.targetAmount) * 100)
+      );
 
-        const progressPercent = Math.min(
-          100,
-          Math.round((g.currentAmount / g.targetAmount) * 100)
-        );
-
-        return {
-          ...g,
-          progressPercent,
-          members: members.map((m: any) => ({
-            id: m.userId._id.toString(),
-            name: m.userId.name,
-            username: m.userId.username,
-            image: m.userId.image,
-            role: m.role,
-            status: m.status,
-            totalContributed: m.totalContributed,
-          })),
-        };
-      })
-    );
-
-    return result;
+      return {
+        ...g,
+        progressPercent,
+        members: g.members.map((m) => ({
+          id: m.user.id,
+          name: m.user.name,
+          username: m.user.username,
+          image: m.user.image,
+          role: m.role,
+          status: m.status,
+          totalContributed: m.totalContributed,
+        })),
+      };
+    });
   }
 
   async getGoalById(userId: string, goalId: string) {
-    const userObjId = new Types.ObjectId(userId);
-    const goalObjId = new Types.ObjectId(goalId);
-
-    const goal = await Goal.findById(goalObjId)
-      .populate("creator", "name username email image")
-      .lean();
+    const goal = await prisma.goal.findUnique({
+      where: { id: goalId },
+      include: {
+        creator: {
+          select: { name: true, username: true, email: true, image: true },
+        },
+        members: {
+          include: {
+            user: { select: { id: true, name: true, username: true, email: true, image: true } },
+          },
+        },
+      },
+    });
 
     if (!goal) {
       throw new Error("Goal not found");
     }
 
-    const members = await GoalMember.find({ goalId: goalObjId })
-      .populate("userId", "name username email image")
-      .lean();
-
-    const isMember = members.some((m: any) => m.userId._id.toString() === userId);
+    const isMember = goal.members.some((m) => m.userId === userId);
     if (!isMember) {
       throw new Error("You do not have access to this Goal");
     }
@@ -155,11 +178,11 @@ export class GoalService {
     return {
       ...goal,
       progressPercent,
-      members: members.map((m: any) => ({
-        id: m.userId._id.toString(),
-        name: m.userId.name,
-        username: m.userId.username,
-        image: m.userId.image,
+      members: goal.members.map((m) => ({
+        id: m.user.id,
+        name: m.user.name,
+        username: m.user.username,
+        image: m.user.image,
         role: m.role,
         status: m.status,
         totalContributed: m.totalContributed,
@@ -173,69 +196,63 @@ export class GoalService {
     friendIds: string[],
     existingGoalDoc?: any
   ) {
-    const goalObjId = new Types.ObjectId(goalId);
-    const userObjId = new Types.ObjectId(userId);
-
-    const goal = existingGoalDoc || (await Goal.findById(goalObjId));
+    const goal = existingGoalDoc || (await prisma.goal.findUnique({ where: { id: goalId } }));
     if (!goal) {
       throw new Error("Goal not found");
     }
 
-    if (goal.creator.toString() !== userId) {
+    if (goal.creatorId !== userId) {
       throw new Error("Only the Goal creator can invite friends");
     }
 
-    const creatorUser = await User.findById(userObjId).select("name username");
+    const creatorUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true, username: true },
+    });
 
     const invitedMembers: any[] = [];
 
     for (const friendId of friendIds) {
       if (friendId === userId) continue;
-      const friendObjId = new Types.ObjectId(friendId);
 
-      // Check if already a member or invited
-      const existingMember = await GoalMember.findOne({
-        goalId: goalObjId,
-        userId: friendObjId,
-      });
-
-      if (existingMember) {
-        if (existingMember.status === "declined") {
-          existingMember.status = "invited";
-          await existingMember.save();
-          invitedMembers.push(existingMember);
-        }
-      } else {
-        const newMember = new GoalMember({
-          goalId: goalObjId,
-          userId: friendObjId,
+      const member = await prisma.goalMember.upsert({
+        where: {
+          goalId_userId: { goalId, userId: friendId },
+        },
+        update: {
+          status: "invited",
+        },
+        create: {
+          goalId,
+          userId: friendId,
           role: "member",
           status: "invited",
           totalContributed: 0,
-        });
-        await newMember.save();
-        invitedMembers.push(newMember);
-      }
+        },
+      });
+
+      invitedMembers.push(member);
 
       // Send notification
       await this.notificationService.createNotification({
-        recipient: friendObjId,
-        sender: userObjId,
+        recipientId: friendId,
+        senderId: userId,
         type: "GOAL_INVITATION",
         title: "Savings Goal Invitation 🎯",
         message: `@${creatorUser?.username || "Your friend"} invited you to save together for goal "${goal.title}"`,
         data: {
-          goalId: goal._id,
+          goalId: goal.id,
           goalTitle: goal.title,
           targetAmount: goal.targetAmount,
         },
       });
     }
 
-    // Ensure goal is flagged as shared
     if (!goal.isShared && invitedMembers.length > 0) {
-      goal.isShared = true;
-      await goal.save();
+      await prisma.goal.update({
+        where: { id: goalId },
+        data: { isShared: true },
+      });
     }
 
     return {
@@ -249,22 +266,19 @@ export class GoalService {
     goalId: string,
     action: "accept" | "decline"
   ) {
-    const userObjId = new Types.ObjectId(userId);
-    const goalObjId = new Types.ObjectId(goalId);
-
-    const member = await GoalMember.findOne({
-      goalId: goalObjId,
-      userId: userObjId,
-      status: "invited",
+    const member = await prisma.goalMember.findUnique({
+      where: {
+        goalId_userId: { goalId, userId },
+      },
     });
 
-    if (!member) {
+    if (!member || member.status !== "invited") {
       throw new Error("Goal invitation not found or already processed");
     }
 
     const [goal, user] = await Promise.all([
-      Goal.findById(goalObjId),
-      User.findById(userObjId).select("name username"),
+      prisma.goal.findUnique({ where: { id: goalId } }),
+      prisma.user.findUnique({ where: { id: userId }, select: { name: true, username: true } }),
     ]);
 
     if (!goal) {
@@ -272,64 +286,69 @@ export class GoalService {
     }
 
     if (action === "accept") {
-      member.status = "accepted";
-      await member.save();
+      const updatedMember = await prisma.goalMember.update({
+        where: { id: member.id },
+        data: { status: "accepted" },
+      });
 
-      // Notify creator
       await this.notificationService.createNotification({
-        recipient: goal.creator,
-        sender: userObjId,
+        recipientId: goal.creatorId,
+        senderId: userId,
         type: "GOAL_ACCEPTED",
         title: "Goal Invitation Accepted",
         message: `@${user?.username || "Your friend"} joined goal "${goal.title}"! 🎉`,
-        data: { goalId: goal._id },
+        data: { goalId: goal.id },
       });
 
       return {
         message: "You have successfully joined this Goal!",
-        member,
+        member: updatedMember,
       };
     } else {
-      member.status = "declined";
-      await member.save();
+      const updatedMember = await prisma.goalMember.update({
+        where: { id: member.id },
+        data: { status: "declined" },
+      });
 
       return {
         message: "Goal invitation declined",
-        member,
+        member: updatedMember,
       };
     }
   }
 
   async getGoalInvitations(userId: string) {
-    const userObjId = new Types.ObjectId(userId);
-
-    const pendingMemberships = await GoalMember.find({
-      userId: userObjId,
-      status: "invited",
-    })
-      .populate({
-        path: "goalId",
-        populate: { path: "creator", select: "name username email image" },
-      })
-      .sort({ createdAt: -1 })
-      .lean();
+    const pendingMemberships = await prisma.goalMember.findMany({
+      where: {
+        userId,
+        status: "invited",
+      },
+      include: {
+        goal: {
+          include: {
+            creator: { select: { name: true, username: true, email: true, image: true } },
+          },
+        },
+      },
+      orderBy: { joinedAt: "desc" },
+    });
 
     return pendingMemberships
-      .filter((m: any) => m.goalId)
-      .map((m: any) => ({
-        invitationId: m._id.toString(),
+      .filter((m) => m.goal)
+      .map((m) => ({
+        invitationId: m.id,
         goal: {
-          id: m.goalId._id.toString(),
-          title: m.goalId.title,
-          description: m.goalId.description,
-          targetAmount: m.goalId.targetAmount,
-          currentAmount: m.goalId.currentAmount,
-          category: m.goalId.category,
-          icon: m.goalId.icon,
-          deadline: m.goalId.deadline,
-          creator: m.goalId.creator,
+          id: m.goal.id,
+          title: m.goal.title,
+          description: m.goal.description,
+          targetAmount: m.goal.targetAmount,
+          currentAmount: m.goal.currentAmount,
+          category: m.goal.category,
+          icon: m.goal.icon,
+          deadline: m.goal.deadline,
+          creator: m.goal.creator,
         },
-        invitedAt: m.createdAt,
+        invitedAt: m.joinedAt,
       }));
   }
 
@@ -343,20 +362,17 @@ export class GoalService {
       throw new Error("Contribution amount must be greater than 0");
     }
 
-    const userObjId = new Types.ObjectId(userId);
-    const goalObjId = new Types.ObjectId(goalId);
-
-    const member = await GoalMember.findOne({
-      goalId: goalObjId,
-      userId: userObjId,
-      status: "accepted",
+    const member = await prisma.goalMember.findUnique({
+      where: {
+        goalId_userId: { goalId, userId },
+      },
     });
 
-    if (!member) {
+    if (!member || member.status !== "accepted") {
       throw new Error("You are not an active member of this Goal");
     }
 
-    const goal = await Goal.findById(goalObjId);
+    const goal = await prisma.goal.findUnique({ where: { id: goalId } });
     if (!goal) {
       throw new Error("Goal not found");
     }
@@ -365,11 +381,10 @@ export class GoalService {
       throw new Error("This Goal is no longer active");
     }
 
-    // If accountId provided, verify and debit account balance
+    // If accountId provided, verify balance
     if (accountId) {
-      const account = await Account.findOne({
-        _id: new Types.ObjectId(accountId),
-        userId: userObjId,
+      const account = await prisma.bankAccount.findFirst({
+        where: { id: accountId, userId },
       });
 
       if (!account) {
@@ -379,42 +394,63 @@ export class GoalService {
       if (account.balance < amount) {
         throw new Error("Insufficient account balance for goal contribution");
       }
-
-      account.balance -= amount;
-      await account.save();
     }
 
-    // Increment goal total & member contribution atomically
-    goal.currentAmount = (goal.currentAmount || 0) + amount;
-    if (goal.currentAmount >= goal.targetAmount) {
-      goal.status = "completed";
-    }
-    await goal.save();
+    const newCurrentAmount = goal.currentAmount + amount;
+    const isCompleted = newCurrentAmount >= goal.targetAmount;
+    const newStatus = isCompleted ? "completed" : goal.status;
 
-    member.totalContributed = (member.totalContributed || 0) + amount;
-    await member.save();
+    const operations: any[] = [
+      prisma.goal.update({
+        where: { id: goalId },
+        data: {
+          currentAmount: { increment: amount },
+          status: newStatus,
+        },
+      }),
+      prisma.goalMember.update({
+        where: { id: member.id },
+        data: {
+          totalContributed: { increment: amount },
+        },
+      }),
+    ];
+
+    if (accountId) {
+      operations.push(
+        prisma.bankAccount.update({
+          where: { id: accountId },
+          data: { balance: { decrement: amount } },
+        })
+      );
+    }
+
+    await prisma.$transaction(operations);
 
     // If shared goal, notify other members
     if (goal.isShared) {
-      const otherMembers = await GoalMember.find({
-        goalId: goalObjId,
-        userId: { $ne: userObjId },
-        status: "accepted",
+      const otherMembers = await prisma.goalMember.findMany({
+        where: {
+          goalId,
+          userId: { not: userId },
+          status: "accepted",
+        },
       });
 
-      const contributorUser = await User.findById(userObjId).select(
-        "name username"
-      );
+      const contributorUser = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { name: true, username: true },
+      });
 
       for (const other of otherMembers) {
         await this.notificationService.createNotification({
-          recipient: other.userId,
-          sender: userObjId,
+          recipientId: other.userId,
+          senderId: userId,
           type: "GOAL_CONTRIBUTION",
           title: "New Goal Contribution",
           message: `@${contributorUser?.username || "Your friend"} contributed ${amount.toLocaleString("en-US")} to "${goal.title}"`,
           data: {
-            goalId: goal._id,
+            goalId: goal.id,
             amount,
             goalTitle: goal.title,
           },
@@ -424,53 +460,52 @@ export class GoalService {
 
     return {
       message: "Goal contribution successful!",
-      currentAmount: goal.currentAmount,
+      currentAmount: newCurrentAmount,
       targetAmount: goal.targetAmount,
-      totalContributed: member.totalContributed,
-      status: goal.status,
+      totalContributed: member.totalContributed + amount,
+      status: newStatus,
     };
   }
 
   async updateGoal(userId: string, goalId: string, data: any) {
-    const goal = await Goal.findById(new Types.ObjectId(goalId));
+    const goal = await prisma.goal.findUnique({ where: { id: goalId } });
     if (!goal) {
       throw new Error("Goal not found");
     }
 
-    if (goal.creator.toString() !== userId) {
+    if (goal.creatorId !== userId) {
       throw new Error("Only the Goal creator can update Goal details");
     }
 
-    if (data.title !== undefined) goal.title = data.title.trim();
-    if (data.description !== undefined) goal.description = data.description?.trim();
-    if (data.targetAmount !== undefined) goal.targetAmount = data.targetAmount;
-    if (data.category !== undefined) goal.category = data.category;
-    if (data.icon !== undefined) goal.icon = data.icon;
-    if (data.deadline !== undefined) {
-      goal.deadline = data.deadline ? new Date(data.deadline) : undefined;
-    }
-    if (data.status !== undefined) goal.status = data.status;
-
-    await goal.save();
-    return goal;
+    return await prisma.goal.update({
+      where: { id: goalId },
+      data: {
+        ...(data.title !== undefined && { title: data.title.trim() }),
+        ...(data.description !== undefined && { description: data.description?.trim() }),
+        ...(data.targetAmount !== undefined && { targetAmount: data.targetAmount }),
+        ...(data.category !== undefined && { category: data.category }),
+        ...(data.icon !== undefined && { icon: data.icon }),
+        ...(data.deadline !== undefined && {
+          deadline: data.deadline ? new Date(data.deadline) : null,
+        }),
+        ...(data.status !== undefined && { status: data.status }),
+      },
+    });
   }
 
   async deleteGoal(userId: string, goalId: string) {
-    const goalObjId = new Types.ObjectId(goalId);
-    const goal = await Goal.findById(goalObjId);
-
+    const goal = await prisma.goal.findUnique({ where: { id: goalId } });
     if (!goal) {
       throw new Error("Goal not found");
     }
 
-    if (goal.creator.toString() !== userId) {
+    if (goal.creatorId !== userId) {
       throw new Error("Only the Goal creator can delete this Goal");
     }
 
-    await Promise.all([
-      Goal.findByIdAndDelete(goalObjId),
-      GoalMember.deleteMany({ goalId: goalObjId }),
-    ]);
+    await prisma.goal.delete({
+      where: { id: goalId },
+    });
 
     return {
       message: "Goal deleted successfully",
