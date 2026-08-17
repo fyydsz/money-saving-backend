@@ -1,11 +1,15 @@
-import { Category, ICategory, Label, ILabel } from "../../db";
+import { prisma } from "../../db";
 import { DEFAULT_CATEGORIES, CategoryType } from "../../constants/category.constant";
 import { CreateCategoryInput, CreateLabelInput } from "./category-label.dto";
+import type { Category, Label } from "@prisma/client";
 
 export class CategoryLabelService {
   async getCategories(userId?: string) {
     const customCategories = userId
-      ? await Category.find({ userId }).sort({ name: 1 })
+      ? await prisma.category.findMany({
+          where: { userId },
+          orderBy: { name: "asc" },
+        })
       : [];
 
     return {
@@ -18,20 +22,20 @@ export class CategoryLabelService {
           isDefault: true,
         })),
         ...customCategories.map((c) => ({
-          id: c._id.toString(),
+          id: c.id,
           slug: c.slug,
           name: c.name,
           type: c.type,
           icon: c.icon,
           color: c.color,
-          description: c.description,
+          description: "",
           isDefault: false,
         })),
       ],
     };
   }
 
-  async createCategory(userId: string, data: CreateCategoryInput): Promise<ICategory> {
+  async createCategory(userId: string, data: CreateCategoryInput): Promise<Category> {
     const slug = data.name
       .toLowerCase()
       .trim()
@@ -46,70 +50,87 @@ export class CategoryLabelService {
       throw new Error(`Category '${data.name}' already exists in system defaults`);
     }
 
-    const existing = await Category.findOne({ userId, slug });
+    const existing = await prisma.category.findUnique({
+      where: {
+        userId_slug: { userId, slug },
+      },
+    });
     if (existing) {
       throw new Error(`Category '${data.name}' already exists`);
     }
 
-    const category = new Category({
-      userId,
-      slug,
-      name: data.name,
-      type: data.type,
-      icon: data.icon || "Tag",
-      color: data.color || "#64748B",
-      description: data.description || "",
-      isDefault: false,
+    return await prisma.category.create({
+      data: {
+        userId,
+        slug,
+        name: data.name,
+        type: data.type,
+        icon: data.icon || "Tag",
+        color: data.color || "#64748B",
+        isCustom: true,
+        isArchived: false,
+      },
     });
-
-    return await category.save();
   }
 
   async deleteCategory(userId: string, categoryId: string): Promise<{ success: boolean; message: string }> {
-    const category = await Category.findOne({ _id: categoryId, userId });
+    const category = await prisma.category.findFirst({
+      where: { id: categoryId, userId },
+    });
     if (!category) {
       throw new Error("Custom category not found or access denied");
     }
 
-    await category.deleteOne();
+    await prisma.category.delete({
+      where: { id: categoryId },
+    });
     return {
       success: true,
       message: "Category deleted successfully",
     };
   }
 
-  async getLabels(userId: string): Promise<ILabel[]> {
-    return await Label.find({ userId }).sort({ name: 1 });
+  async getLabels(userId: string): Promise<Label[]> {
+    return await prisma.label.findMany({
+      where: { userId },
+      orderBy: { name: "asc" },
+    });
   }
 
-  async createLabel(userId: string, data: CreateLabelInput): Promise<ILabel> {
+  async createLabel(userId: string, data: CreateLabelInput): Promise<Label> {
     const trimmedName = data.name.trim();
 
-    const existing = await Label.findOne({
-      userId,
-      name: { $regex: new RegExp(`^${trimmedName}$`, "i") },
+    const existing = await prisma.label.findFirst({
+      where: {
+        userId,
+        name: { equals: trimmedName, mode: "insensitive" },
+      },
     });
 
     if (existing) {
       return existing;
     }
 
-    const label = new Label({
-      userId,
-      name: trimmedName,
-      color: data.color || "#64748B",
+    return await prisma.label.create({
+      data: {
+        userId,
+        name: trimmedName,
+        color: data.color || "#64748B",
+      },
     });
-
-    return await label.save();
   }
 
   async deleteLabel(userId: string, labelId: string): Promise<{ success: boolean; message: string }> {
-    const label = await Label.findOne({ _id: labelId, userId });
+    const label = await prisma.label.findFirst({
+      where: { id: labelId, userId },
+    });
     if (!label) {
       throw new Error("Label not found or access denied");
     }
 
-    await label.deleteOne();
+    await prisma.label.delete({
+      where: { id: labelId },
+    });
     return {
       success: true,
       message: "Label deleted successfully",
