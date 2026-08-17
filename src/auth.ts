@@ -1,25 +1,20 @@
 import { betterAuth } from "better-auth";
-import { mongodbAdapter } from "@better-auth/mongo-adapter";
+import { prismaAdapter } from "@better-auth/prisma-adapter";
 import { username } from "better-auth/plugins";
-import { MongoClient } from "mongodb";
-
-const mongoUri = process.env.MONGODB_URI || "mongodb://localhost:27017/elysia-auth";
-const client = new MongoClient(mongoUri);
-const db = client.db();
+import { prisma } from "./db";
 
 export const auth = betterAuth({
   secret: process.env.BETTER_AUTH_SECRET,
   baseURL: process.env.BETTER_AUTH_URL || "http://localhost:8000",
+  basePath: "/api/auth",
   trustedOrigins: [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://192.168.1.9:3000",
-    /^http:\/\/192\.168\.\d+\.\d+:3000$/,
-    /^http:\/\/10\.\d+\.\d+\.\d+:3000$/,
-    /^http:\/\/172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+:3000$/,
+    "http://localhost:8000",
   ],
-  database: mongodbAdapter(db, {
-    client,
+  database: prismaAdapter(prisma, {
+    provider: "postgresql",
   }),
   emailAndPassword: {
     enabled: true,
@@ -27,7 +22,21 @@ export const auth = betterAuth({
   plugins: [
     username(),
   ],
+  session: {
+    expiresIn: 60 * 60 * 24 * 7, // 7 days
+    updateAge: 60 * 60 * 24, // Update session if older than 1 day
+    cookieCache: {
+      enabled: true,
+      maxAge: 5 * 60, // 5 minutes cookie cache to reduce DB lookups
+    },
+  },
   advanced: {
     useSecureCookies: process.env.NODE_ENV === "production",
+    defaultCookieAttributes: {
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      httpOnly: true,
+      path: "/",
+    },
   },
 });

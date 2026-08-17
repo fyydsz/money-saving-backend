@@ -12,9 +12,13 @@ import { authGuard } from "./plugins/auth.plugin";
 import { AuthService } from "./modules/auth/auth.service";
 import { betterAuthPlugin } from "./plugins/better-auth.plugin";
 import { auth } from "./auth";
+import { startSessionCleanupTask } from "./utils/cleanup";
 
 // Initialize DB connection
 await connectDB();
+
+// Start background task to clean expired sessions periodically
+startSessionCleanupTask();
 
 const authService = new AuthService();
 const port = process.env.PORT ? parseInt(process.env.PORT) : 8000;
@@ -22,17 +26,23 @@ const port = process.env.PORT ? parseInt(process.env.PORT) : 8000;
 const app = new Elysia()
   .use(
     cors({
-      origin: true,
+      origin: [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://192.168.1.9:3000",
+      ],
       credentials: true,
       allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
       exposeHeaders: ["Set-Cookie"],
       methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     })
   )
-  // Better Auth endpoint (/api/auth/*)
+  // Better Auth endpoint (/api/auth/*) — must be first
   .use(betterAuthPlugin)
   // Legacy / Custom Auth endpoint (/auth/*) for backward compatibility
   .use(authController)
+  // Auth guard for protected routes
+  .use(authGuard)
   // Money Saving Modules
   .use(accountController)
   .use(categoryLabelController)
@@ -40,7 +50,6 @@ const app = new Elysia()
   .use(socialController)
   .use(goalController)
   .use(notificationController)
-  .use(authGuard)
   // Profile endpoint supporting both Better Auth session and JWT
   .get(
     "/profile",
