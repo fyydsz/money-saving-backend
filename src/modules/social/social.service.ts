@@ -1,6 +1,24 @@
-import { Types } from "mongoose";
-import { Friendship, RelationshipType, User } from "../../db";
+import { prisma } from "../../db";
 import { NotificationService } from "../notification/notification.service";
+
+export type RelationshipType =
+  | "girlfriend"
+  | "boyfriend"
+  | "partner"
+  | "spouse"
+  | "bestfriend"
+  | "family"
+  | "friend";
+
+export const RELATIONSHIP_TYPES: RelationshipType[] = [
+  "girlfriend",
+  "boyfriend",
+  "partner",
+  "spouse",
+  "bestfriend",
+  "family",
+  "friend",
+];
 
 export class SocialService {
   private notificationService: NotificationService;
@@ -13,40 +31,46 @@ export class SocialService {
     const cleanQuery = query.trim();
     if (!cleanQuery) return [];
 
-    const currentUserObjId = new Types.ObjectId(currentUserId);
-
-    // Search users matching username or name (exclude current user)
-    const regex = new RegExp(cleanQuery, "i");
-    const users = await User.find({
-      _id: { $ne: currentUserObjId },
-      $or: [{ username: regex }, { name: regex }, { email: regex }],
-    })
-      .select("name username email image")
-      .limit(20)
-      .lean();
+    const users = await prisma.user.findMany({
+      where: {
+        id: { not: currentUserId },
+        OR: [
+          { username: { contains: cleanQuery, mode: "insensitive" } },
+          { name: { contains: cleanQuery, mode: "insensitive" } },
+          { email: { contains: cleanQuery, mode: "insensitive" } },
+        ],
+      },
+      select: {
+        id: true,
+        name: true,
+        username: true,
+        email: true,
+        image: true,
+      },
+      take: 20,
+    });
 
     if (users.length === 0) return [];
 
-    const userIds = users.map((u) => u._id);
+    const userIds = users.map((u) => u.id);
 
-    // Find all friendships involving current user and found users
-    const friendships = await Friendship.find({
-      $or: [
-        { requester: currentUserObjId, recipient: { $in: userIds } },
-        { recipient: currentUserObjId, requester: { $in: userIds } },
-      ],
-    }).lean();
+    const friendships = await prisma.friendship.findMany({
+      where: {
+        OR: [
+          { requesterId: currentUserId, recipientId: { in: userIds } },
+          { recipientId: currentUserId, requesterId: { in: userIds } },
+        ],
+      },
+    });
 
     const friendshipMap = new Map<string, any>();
     for (const f of friendships) {
-      const otherId = f.requester.toString() === currentUserId
-        ? f.recipient.toString()
-        : f.requester.toString();
+      const otherId = f.requesterId === currentUserId ? f.recipientId : f.requesterId;
       friendshipMap.set(otherId, f);
     }
 
     return users.map((userDoc) => {
-      const uid = userDoc._id.toString();
+      const uid = userDoc.id;
       const f = friendshipMap.get(uid);
 
       let relationshipStatus:
@@ -60,20 +84,24 @@ export class SocialService {
       let myCustom: any = null;
 
       if (f) {
-        friendshipId = f._id.toString();
+        friendshipId = f.id;
         if (f.status === "accepted") {
           relationshipStatus = "accepted";
           myCustom =
-            f.requester.toString() === currentUserId
-              ? f.requesterCustom
-              : f.recipientCustom;
+            f.requesterId === currentUserId
+              ? {
+                  relationshipType: f.requesterRelType,
+                  nickname: f.requesterNickname,
+                }
+              : {
+                  relationshipType: f.recipientRelType,
+                  nickname: f.recipientNickname,
+                };
         } else if (f.status === "pending") {
           relationshipStatus =
-            f.requester.toString() === currentUserId
-              ? "pending_sent"
-              : "pending_received";
+            f.requesterId === currentUserId ? "pending_sent" : "pending_received";
         } else {
-          relationshipStatus = f.status;
+          relationshipStatus = f.status as any;
         }
       }
 
@@ -82,7 +110,7 @@ export class SocialService {
         name: userDoc.name,
         username: userDoc.username,
         email: userDoc.email,
-        image: (userDoc as any).image,
+        image: userDoc.image,
         friendshipId,
         relationshipStatus,
         myCustom,
@@ -95,24 +123,22 @@ export class SocialService {
       throw new Error("Cannot send friend request to yourself");
     }
 
-    const requesterObjId = new Types.ObjectId(requesterId);
-    const targetObjId = new Types.ObjectId(targetUserId);
-
     const [requesterUser, targetUser] = await Promise.all([
-      User.findById(requesterObjId).select("name username"),
-      User.findById(targetObjId).select("name username"),
+      prisma.user.findUnique({ where: { id: requesterId }, select: { name: true, username: true } }),
+      prisma.user.findUnique({ where: { id: targetUserId }, select: { name: true, username: true } }),
     ]);
 
     if (!targetUser) {
       throw new Error("Target user not found");
     }
 
-    // Check existing friendship
-    const existing = await Friendship.findOne({
-      $or: [
-        { requester: requesterObjId, recipient: targetObjId },
-        { requester: targetObjId, recipient: requesterObjId },
-      ],
+    const existing = await prisma.friendship.findFirst({
+      where: {
+        OR: [
+          { requesterId, recipientId: targetUserId },
+          { requesterId: targetUserId, recipientId: requesterId },
+        ],
+      },
     });
 
     if (existing) {
@@ -120,7 +146,7 @@ export class SocialService {
         throw new Error("You are already friends");
       }
       if (existing.status === "pending") {
-        if (existing.requester.toString() === requesterId) {
+        if (existing.requesterId === requesterId) {
           throw new Error("Friend request has already been sent");
         } else {
           throw new Error(
@@ -128,46 +154,48 @@ export class SocialService {
           );
         }
       }
-      // If declined before, reset to pending
-      existing.requester = requesterObjId;
-      existing.recipient = targetObjId;
-      existing.status = "pending";
-      await existing.save();
 
-      // Send notification
+      const updated = await prisma.friendship.update({
+        where: { id: existing.id },
+        data: {
+          requesterId,
+          recipientId: targetUserId,
+          status: "pending",
+        },
+      });
+
       await this.notificationService.createNotification({
-        recipient: targetObjId,
-        sender: requesterObjId,
+        recipientId: targetUserId,
+        senderId: requesterId,
         type: "FRIEND_REQUEST",
         title: "Friend Request",
         message: `@${requesterUser?.username || "Someone"} wants to be friends with you`,
-        data: { friendshipId: existing._id },
+        data: { friendshipId: updated.id },
       });
 
       return {
         message: "Friend request sent successfully",
-        friendship: existing,
+        friendship: updated,
       };
     }
 
-    const friendship = new Friendship({
-      requester: requesterObjId,
-      recipient: targetObjId,
-      status: "pending",
-      requesterCustom: { relationshipType: "friend" },
-      recipientCustom: { relationshipType: "friend" },
+    const friendship = await prisma.friendship.create({
+      data: {
+        requesterId,
+        recipientId: targetUserId,
+        status: "pending",
+        requesterRelType: "friend",
+        recipientRelType: "friend",
+      },
     });
 
-    await friendship.save();
-
-    // Send notification to recipient
     await this.notificationService.createNotification({
-      recipient: targetObjId,
-      sender: requesterObjId,
+      recipientId: targetUserId,
+      senderId: requesterId,
       type: "FRIEND_REQUEST",
       title: "Friend Request",
       message: `@${requesterUser?.username || "Someone"} wants to be friends with you`,
-      data: { friendshipId: friendship._id },
+      data: { friendshipId: friendship.id },
     });
 
     return {
@@ -181,75 +209,83 @@ export class SocialService {
     friendshipId: string,
     action: "accept" | "decline"
   ) {
-    const friendship = await Friendship.findOne({
-      _id: new Types.ObjectId(friendshipId),
-      recipient: new Types.ObjectId(userId),
-      status: "pending",
+    const friendship = await prisma.friendship.findFirst({
+      where: {
+        id: friendshipId,
+        recipientId: userId,
+        status: "pending",
+      },
     });
 
     if (!friendship) {
       throw new Error("Friend request not found or already processed");
     }
 
-    const recipientUser = await User.findById(userId).select("name username");
+    const recipientUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true, username: true },
+    });
 
     if (action === "accept") {
-      friendship.status = "accepted";
-      await friendship.save();
+      const updated = await prisma.friendship.update({
+        where: { id: friendshipId },
+        data: { status: "accepted" },
+      });
 
-      // Notify requester
       await this.notificationService.createNotification({
-        recipient: friendship.requester,
-        sender: new Types.ObjectId(userId),
+        recipientId: friendship.requesterId,
+        senderId: userId,
         type: "FRIEND_ACCEPTED",
         title: "Friend Request Accepted",
         message: `@${recipientUser?.username || "Your friend"} accepted your friend request`,
-        data: { friendshipId: friendship._id },
+        data: { friendshipId: updated.id },
       });
 
       return {
         message: "Friend request accepted successfully",
-        friendship,
+        friendship: updated,
       };
     } else {
-      friendship.status = "declined";
-      await friendship.save();
+      const updated = await prisma.friendship.update({
+        where: { id: friendshipId },
+        data: { status: "declined" },
+      });
 
       return {
         message: "Friend request declined",
-        friendship,
+        friendship: updated,
       };
     }
   }
 
   async getFriends(userId: string) {
-    const userObjId = new Types.ObjectId(userId);
+    const friendships = await prisma.friendship.findMany({
+      where: {
+        OR: [{ requesterId: userId }, { recipientId: userId }],
+        status: "accepted",
+      },
+      include: {
+        requester: { select: { id: true, name: true, username: true, email: true, image: true } },
+        recipient: { select: { id: true, name: true, username: true, email: true, image: true } },
+      },
+    });
 
-    const friendships = await Friendship.find({
-      $or: [{ requester: userObjId }, { recipient: userObjId }],
-      status: "accepted",
-    })
-      .populate("requester", "name username email image")
-      .populate("recipient", "name username email image")
-      .lean();
-
-    return friendships.map((f: any) => {
-      const isRequester = f.requester._id.toString() === userId;
+    return friendships.map((f) => {
+      const isRequester = f.requesterId === userId;
       const friendProfile = isRequester ? f.recipient : f.requester;
-      const myCustom = isRequester ? f.requesterCustom : f.recipientCustom;
 
       return {
-        friendshipId: f._id.toString(),
+        friendshipId: f.id,
         friend: {
-          id: friendProfile._id.toString(),
+          id: friendProfile.id,
           name: friendProfile.name,
           username: friendProfile.username,
           email: friendProfile.email,
           image: friendProfile.image,
         },
         myCustom: {
-          relationshipType: myCustom?.relationshipType || "friend",
-          nickname: myCustom?.nickname || "",
+          relationshipType: isRequester ? f.requesterRelType : f.recipientRelType,
+          nickname: (isRequester ? f.requesterNickname : f.recipientNickname) || "",
         },
         since: f.updatedAt || f.createdAt,
       };
@@ -257,30 +293,34 @@ export class SocialService {
   }
 
   async getFriendRequests(userId: string) {
-    const userObjId = new Types.ObjectId(userId);
-
     const [incoming, outgoing] = await Promise.all([
-      Friendship.find({
-        recipient: userObjId,
-        status: "pending",
-      })
-        .populate("requester", "name username email image")
-        .sort({ createdAt: -1 })
-        .lean(),
-      Friendship.find({
-        requester: userObjId,
-        status: "pending",
-      })
-        .populate("recipient", "name username email image")
-        .sort({ createdAt: -1 })
-        .lean(),
+      prisma.friendship.findMany({
+        where: {
+          recipientId: userId,
+          status: "pending",
+        },
+        include: {
+          requester: { select: { id: true, name: true, username: true, email: true, image: true } },
+        },
+        orderBy: { createdAt: "desc" },
+      }),
+      prisma.friendship.findMany({
+        where: {
+          requesterId: userId,
+          status: "pending",
+        },
+        include: {
+          recipient: { select: { id: true, name: true, username: true, email: true, image: true } },
+        },
+        orderBy: { createdAt: "desc" },
+      }),
     ]);
 
     return {
-      incoming: incoming.map((f: any) => ({
-        friendshipId: f._id.toString(),
+      incoming: incoming.map((f) => ({
+        friendshipId: f.id,
         user: {
-          id: f.requester._id.toString(),
+          id: f.requester.id,
           name: f.requester.name,
           username: f.requester.username,
           email: f.requester.email,
@@ -288,10 +328,10 @@ export class SocialService {
         },
         createdAt: f.createdAt,
       })),
-      outgoing: outgoing.map((f: any) => ({
-        friendshipId: f._id.toString(),
+      outgoing: outgoing.map((f) => ({
+        friendshipId: f.id,
         user: {
-          id: f.recipient._id.toString(),
+          id: f.recipient.id,
           name: f.recipient.name,
           username: f.recipient.username,
           email: f.recipient.email,
@@ -307,58 +347,61 @@ export class SocialService {
     friendUserId: string,
     data: { relationshipType: RelationshipType; nickname?: string }
   ) {
-    const userObjId = new Types.ObjectId(userId);
-    const friendObjId = new Types.ObjectId(friendUserId);
-
-    const friendship = await Friendship.findOne({
-      $or: [
-        { requester: userObjId, recipient: friendObjId },
-        { requester: friendObjId, recipient: userObjId },
-      ],
-      status: "accepted",
+    const friendship = await prisma.friendship.findFirst({
+      where: {
+        OR: [
+          { requesterId: userId, recipientId: friendUserId },
+          { requesterId: friendUserId, recipientId: userId },
+        ],
+        status: "accepted",
+      },
     });
 
     if (!friendship) {
       throw new Error("Friendship not found");
     }
 
-    const isRequester = friendship.requester.toString() === userId;
-    if (isRequester) {
-      friendship.requesterCustom = {
-        relationshipType: data.relationshipType,
-        nickname: data.nickname?.trim(),
-      };
-    } else {
-      friendship.recipientCustom = {
-        relationshipType: data.relationshipType,
-        nickname: data.nickname?.trim(),
-      };
-    }
+    const isRequester = friendship.requesterId === userId;
 
-    await friendship.save();
+    const updated = await prisma.friendship.update({
+      where: { id: friendship.id },
+      data: isRequester
+        ? {
+            requesterRelType: data.relationshipType,
+            requesterNickname: data.nickname?.trim() || null,
+          }
+        : {
+            recipientRelType: data.relationshipType,
+            recipientNickname: data.nickname?.trim() || null,
+          },
+    });
 
     return {
       message: "Relationship tag updated successfully",
-      customization: isRequester
-        ? friendship.requesterCustom
-        : friendship.recipientCustom,
+      customization: {
+        relationshipType: isRequester ? updated.requesterRelType : updated.recipientRelType,
+        nickname: isRequester ? updated.requesterNickname : updated.recipientNickname,
+      },
     };
   }
 
   async removeFriend(userId: string, friendUserId: string) {
-    const userObjId = new Types.ObjectId(userId);
-    const friendObjId = new Types.ObjectId(friendUserId);
-
-    const result = await Friendship.findOneAndDelete({
-      $or: [
-        { requester: userObjId, recipient: friendObjId },
-        { requester: friendObjId, recipient: userObjId },
-      ],
+    const friendship = await prisma.friendship.findFirst({
+      where: {
+        OR: [
+          { requesterId: userId, recipientId: friendUserId },
+          { requesterId: friendUserId, recipientId: userId },
+        ],
+      },
     });
 
-    if (!result) {
+    if (!friendship) {
       throw new Error("Friendship not found");
     }
+
+    await prisma.friendship.delete({
+      where: { id: friendship.id },
+    });
 
     return {
       message: "Friend removed successfully",
