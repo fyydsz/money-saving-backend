@@ -1,5 +1,5 @@
 import { t } from "elysia";
-import { TransactionType } from "../../db/models/transaction.model";
+import { TransactionType } from "./transaction.service";
 
 export const CreateTransactionDto = t.Object({
   accountId: t.String({ minLength: 1 }),

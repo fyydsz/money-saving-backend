@@ -1,50 +1,55 @@
-import { Types } from "mongoose";
-import { Transaction, ITransaction, TransactionType, Account, Label } from "../../db";
+import { prisma } from "../../db";
 import {
   CreateTransactionInput,
   UpdateTransactionInput,
   TransactionQueryInput,
 } from "./transaction.dto";
+import type { Transaction } from "@prisma/client";
+
+export enum TransactionType {
+  EXPENSE = "EXPENSE",
+  INCOME = "INCOME",
+  TRANSFER = "TRANSFER",
+}
 
 export class TransactionService {
   async getTransactions(userId: string, query: TransactionQueryInput) {
-    const filter: any = { userId };
+    const where: any = { userId };
 
     if (query.accountId) {
-      filter.accountId = new Types.ObjectId(query.accountId);
+      where.accountId = query.accountId;
     }
 
     if (query.category) {
-      filter.category = query.category;
+      where.category = query.category;
     }
 
     if (query.label) {
-      filter.labels = query.label;
+      where.labels = { has: query.label };
     }
 
     if (query.type) {
-      filter.type = query.type;
+      where.type = query.type;
     }
 
     if (query.search) {
-      filter.$or = [
-        { description: { $regex: query.search, $options: "i" } },
-        { notes: { $regex: query.search, $options: "i" } },
+      where.OR = [
+        { description: { contains: query.search, mode: "insensitive" } },
+        { notes: { contains: query.search, mode: "insensitive" } },
       ];
     }
 
     if (query.startDate || query.endDate) {
-      filter.date = {};
+      where.date = {};
       if (query.startDate) {
-        filter.date.$gte = new Date(query.startDate);
+        where.date.gte = new Date(query.startDate);
       }
       if (query.endDate) {
         const end = new Date(query.endDate);
-        // Include full end day if only date is passed
         if (query.endDate.length <= 10) {
           end.setHours(23, 59, 59, 999);
         }
-        filter.date.$lte = end;
+        where.date.lte = end;
       }
     }
 
@@ -53,12 +58,24 @@ export class TransactionService {
     const skip = (page - 1) * limit;
 
     const [transactions, total] = await Promise.all([
-      Transaction.find(filter)
-        .populate("accountId", "name accountType providerType providerName color")
-        .sort({ date: -1, createdAt: -1 })
-        .skip(skip)
-        .limit(limit),
-      Transaction.countDocuments(filter),
+      prisma.transaction.findMany({
+        where,
+        include: {
+          account: {
+            select: {
+              name: true,
+              accountType: true,
+              providerType: true,
+              providerName: true,
+              color: true,
+            },
+          },
+        },
+        orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+        skip,
+        take: limit,
+      }),
+      prisma.transaction.count({ where }),
     ]);
 
     return {
@@ -72,11 +89,21 @@ export class TransactionService {
     };
   }
 
-  async getTransactionById(userId: string, id: string): Promise<ITransaction> {
-    const transaction = await Transaction.findOne({ _id: id, userId }).populate(
-      "accountId",
-      "name accountType providerType providerName color"
-    );
+  async getTransactionById(userId: string, id: string): Promise<any> {
+    const transaction = await prisma.transaction.findFirst({
+      where: { id, userId },
+      include: {
+        account: {
+          select: {
+            name: true,
+            accountType: true,
+            providerType: true,
+            providerName: true,
+            color: true,
+          },
+        },
+      },
+    });
 
     if (!transaction) {
       throw new Error("Transaction not found or access denied");
@@ -88,9 +115,11 @@ export class TransactionService {
   async createTransaction(
     userId: string,
     data: CreateTransactionInput
-  ): Promise<ITransaction> {
+  ): Promise<any> {
     // 1. Verify account exists and belongs to user
-    const account = await Account.findOne({ _id: data.accountId, userId });
+    const account = await prisma.bankAccount.findFirst({
+      where: { id: data.accountId, userId },
+    });
     if (!account) {
       throw new Error("Account not found or access denied");
     }
@@ -109,66 +138,79 @@ export class TransactionService {
       amount = Math.abs(amount);
     }
 
-    // 3. Save any new labels to user's labels collection
+    // 3. Save any new labels to user's labels table
     if (data.labels && data.labels.length > 0) {
       for (const labelName of data.labels) {
         const trimmed = labelName.trim();
         if (trimmed) {
-          await Label.findOneAndUpdate(
-            { userId, name: trimmed },
-            { $setOnInsert: { userId, name: trimmed, color: "#64748B" } },
-            { upsert: true }
-          );
+          await prisma.label.upsert({
+            where: { userId_name: { userId, name: trimmed } },
+            update: {},
+            create: { userId, name: trimmed, color: "#64748B" },
+          });
         }
       }
     }
 
-    // 4. Create transaction
-    const transaction = new Transaction({
-      userId,
-      accountId: new Types.ObjectId(data.accountId),
-      amount,
-      type,
-      date: data.date ? new Date(data.date) : new Date(),
-      description: data.description.trim(),
-      category: data.category,
-      labels: data.labels || [],
-      notes: data.notes || "",
-    });
+    // 4. Create transaction & adjust balance atomically
+    const [savedTransaction] = await prisma.$transaction([
+      prisma.transaction.create({
+        data: {
+          userId,
+          accountId: data.accountId,
+          amount,
+          type,
+          date: data.date ? new Date(data.date) : new Date(),
+          description: data.description.trim(),
+          category: data.category,
+          labels: data.labels || [],
+          notes: data.notes || "",
+        },
+        include: {
+          account: {
+            select: {
+              name: true,
+              accountType: true,
+              providerType: true,
+              providerName: true,
+              color: true,
+            },
+          },
+        },
+      }),
+      prisma.bankAccount.update({
+        where: { id: account.id },
+        data: { balance: { increment: amount } },
+      }),
+    ]);
 
-    const savedTransaction = await transaction.save();
-
-    // 5. Update Account Balance atomically
-    await Account.findByIdAndUpdate(account._id, {
-      $inc: { balance: amount },
-    });
-
-    return await savedTransaction.populate(
-      "accountId",
-      "name accountType providerType providerName color"
-    );
+    return savedTransaction;
   }
 
   async updateTransaction(
     userId: string,
     id: string,
     data: UpdateTransactionInput
-  ): Promise<ITransaction> {
-    const existingTx = await Transaction.findOne({ _id: id, userId });
+  ): Promise<any> {
+    const existingTx = await prisma.transaction.findFirst({
+      where: { id, userId },
+    });
     if (!existingTx) {
       throw new Error("Transaction not found");
     }
 
-    const oldAccountId = existingTx.accountId.toString();
+    const oldAccountId = existingTx.accountId;
     const oldAmount = existingTx.amount;
 
     const targetAccountId = data.accountId || oldAccountId;
-    const targetAccount = await Account.findOne({ _id: targetAccountId, userId });
+    const targetAccount = await prisma.bankAccount.findFirst({
+      where: { id: targetAccountId, userId },
+    });
     if (!targetAccount) {
       throw new Error("Target account is invalid or access denied");
     }
 
-    let newType = data.type || existingTx.type;
+    let newType = data.type || (existingTx.type as TransactionType);
     let newAmount = data.amount !== undefined ? data.amount : existingTx.amount;
 
     if (newType === TransactionType.EXPENSE && newAmount > 0) {
@@ -177,66 +219,95 @@ export class TransactionService {
       newAmount = Math.abs(newAmount);
     }
 
-    // Update fields
-    existingTx.accountId = new Types.ObjectId(targetAccountId);
-    existingTx.amount = newAmount;
-    existingTx.type = newType;
-    if (data.date) existingTx.date = new Date(data.date);
-    if (data.description !== undefined) existingTx.description = data.description.trim();
-    if (data.category !== undefined) existingTx.category = data.category;
-    if (data.labels !== undefined) existingTx.labels = data.labels;
-    if (data.notes !== undefined) existingTx.notes = data.notes;
-
     // Save labels if provided
     if (data.labels && data.labels.length > 0) {
       for (const labelName of data.labels) {
         const trimmed = labelName.trim();
         if (trimmed) {
-          await Label.findOneAndUpdate(
-            { userId, name: trimmed },
-            { $setOnInsert: { userId, name: trimmed, color: "#64748B" } },
-            { upsert: true }
-          );
+          await prisma.label.upsert({
+            where: { userId_name: { userId, name: trimmed } },
+            update: {},
+            create: { userId, name: trimmed, color: "#64748B" },
+          });
         }
       }
     }
 
-    const saved = await existingTx.save();
+    const operations: any[] = [
+      prisma.transaction.update({
+        where: { id },
+        data: {
+          accountId: targetAccountId,
+          amount: newAmount,
+          type: newType,
+          ...(data.date && { date: new Date(data.date) }),
+          ...(data.description !== undefined && { description: data.description.trim() }),
+          ...(data.category !== undefined && { category: data.category }),
+          ...(data.labels !== undefined && { labels: data.labels }),
+          ...(data.notes !== undefined && { notes: data.notes }),
+        },
+        include: {
+          account: {
+            select: {
+              name: true,
+              accountType: true,
+              providerType: true,
+              providerName: true,
+              color: true,
+            },
+          },
+        },
+      }),
+    ];
 
     // Adjust balances
     if (oldAccountId === targetAccountId) {
-      // Same account: apply delta
       const delta = newAmount - oldAmount;
       if (delta !== 0) {
-        await Account.findByIdAndUpdate(oldAccountId, { $inc: { balance: delta } });
+        operations.push(
+          prisma.bankAccount.update({
+            where: { id: oldAccountId },
+            data: { balance: { increment: delta } },
+          })
+        );
       }
     } else {
-      // Different accounts: revert old, apply new
-      await Account.findByIdAndUpdate(oldAccountId, { $inc: { balance: -oldAmount } });
-      await Account.findByIdAndUpdate(targetAccountId, { $inc: { balance: newAmount } });
+      operations.push(
+        prisma.bankAccount.update({
+          where: { id: oldAccountId },
+          data: { balance: { decrement: oldAmount } },
+        }),
+        prisma.bankAccount.update({
+          where: { id: targetAccountId },
+          data: { balance: { increment: newAmount } },
+        })
+      );
     }
 
-    return await saved.populate(
-      "accountId",
-      "name accountType providerType providerName color"
-    );
+    const [updatedTx] = await prisma.$transaction(operations);
+    return updatedTx;
   }
 
   async deleteTransaction(
     userId: string,
     id: string
   ): Promise<{ success: boolean; message: string }> {
-    const transaction = await Transaction.findOne({ _id: id, userId });
+    const transaction = await prisma.transaction.findFirst({
+      where: { id, userId },
+    });
     if (!transaction) {
       throw new Error("Transaction not found");
     }
 
-    // Revert balance on Account
-    await Account.findByIdAndUpdate(transaction.accountId, {
-      $inc: { balance: -transaction.amount },
-    });
-
-    await transaction.deleteOne();
+    await prisma.$transaction([
+      prisma.bankAccount.update({
+        where: { id: transaction.accountId },
+        data: { balance: { decrement: transaction.amount } },
+      }),
+      prisma.transaction.delete({
+        where: { id },
+      }),
+    ]);
 
     return {
       success: true,
@@ -245,75 +316,72 @@ export class TransactionService {
   }
 
   async getSummary(userId: string, query: { startDate?: string; endDate?: string; accountId?: string }) {
-    const filter: any = { userId };
+    const where: any = { userId };
 
     if (query.accountId) {
-      filter.accountId = new Types.ObjectId(query.accountId);
+      where.accountId = query.accountId;
     }
 
     if (query.startDate || query.endDate) {
-      filter.date = {};
+      where.date = {};
       if (query.startDate) {
-        filter.date.$gte = new Date(query.startDate);
+        where.date.gte = new Date(query.startDate);
       }
       if (query.endDate) {
         const end = new Date(query.endDate);
         if (query.endDate.length <= 10) {
           end.setHours(23, 59, 59, 999);
         }
-        filter.date.$lte = end;
+        where.date.lte = end;
       }
     }
 
-    const [summaryResult, categoryBreakdown] = await Promise.all([
-      Transaction.aggregate([
-        { $match: filter },
-        {
-          $group: {
-            _id: null,
-            totalIncome: {
-              $sum: {
-                $cond: [{ $gt: ["$amount", 0] }, "$amount", 0],
-              },
-            },
-            totalExpense: {
-              $sum: {
-                $cond: [{ $lt: ["$amount", 0] }, { $abs: "$amount" }, 0],
-              },
-            },
-            netSavings: { $sum: "$amount" },
-            transactionCount: { $sum: 1 },
-          },
-        },
-      ]),
-      Transaction.aggregate([
-        { $match: filter },
-        {
-          $group: {
-            _id: { category: "$category", type: "$type" },
-            totalAmount: { $sum: { $abs: "$amount" } },
-            count: { $sum: 1 },
-          },
-        },
-        { $sort: { totalAmount: -1 } },
-      ]),
-    ]);
+    const txs = await prisma.transaction.findMany({
+      where,
+      select: { amount: true, category: true, type: true },
+    });
 
-    const stats = summaryResult[0] || {
-      totalIncome: 0,
-      totalExpense: 0,
-      netSavings: 0,
-      transactionCount: 0,
-    };
+    let totalIncome = 0;
+    let totalExpense = 0;
+    let netSavings = 0;
+    const categoryMap = new Map<string, { category: string; type: string; totalAmount: number; count: number }>();
+
+    for (const tx of txs) {
+      if (tx.amount > 0) {
+        totalIncome += tx.amount;
+      } else if (tx.amount < 0) {
+        totalExpense += Math.abs(tx.amount);
+      }
+      netSavings += tx.amount;
+
+      const catKey = `${tx.category}_${tx.type}`;
+      const existing = categoryMap.get(catKey);
+      const absAmount = Math.abs(tx.amount);
+      if (existing) {
+        existing.totalAmount += absAmount;
+        existing.count += 1;
+      } else {
+        categoryMap.set(catKey, {
+          category: tx.category,
+          type: tx.type,
+          totalAmount: absAmount,
+          count: 1,
+        });
+      }
+    }
+
+    const categoryBreakdown = Array.from(categoryMap.values()).sort(
+      (a, b) => b.totalAmount - a.totalAmount
+    );
 
     return {
-      summary: stats,
-      categoryBreakdown: categoryBreakdown.map((item) => ({
-        category: item._id.category,
-        type: item._id.type,
-        totalAmount: item.totalAmount,
-        count: item.count,
-      })),
+      summary: {
+        totalIncome,
+        totalExpense,
+        netSavings,
+        transactionCount: txs.length,
+      },
+      categoryBreakdown,
     };
   }
 }
