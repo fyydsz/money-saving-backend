@@ -1,0 +1,237 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ==========================================
+// BETTER AUTH MODELS
+// ==========================================
+
+model User {
+  id              String   @id @default(cuid())
+  name            String
+  email           String   @unique
+  emailVerified   Boolean  @default(false)
+  image           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  username        String?  @unique
+  displayUsername String?
+
+  sessions Session[]
+  accounts Account[]
+
+  // Domain Relations
+  bankAccounts          BankAccount[]
+  transactions          Transaction[]
+  categories            Category[]
+  labels                Label[]
+  createdGoals          Goal[]
+  goalMemberships       GoalMember[]
+  sentFriendships       Friendship[]   @relation("SentFriendships")
+  receivedFriendships   Friendship[]   @relation("ReceivedFriendships")
+  receivedNotifications Notification[] @relation("ReceivedNotifications")
+  sentNotifications     Notification[] @relation("SentNotifications")
+
+  @@map("user")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([providerId, accountId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("verification")
+}
+
+// ==========================================
+// DOMAIN MODELS (MONEY SAVING APP)
+// ==========================================
+
+model BankAccount {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String
+  accountType  String   @default("SAVINGS")
+  providerType String   @default("BANK")
+  providerName String
+  balance      Float    @default(0)
+  currency     String   @default("IDR")
+  color        String?  @default("#3B82F6")
+  isDefault    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  transactions Transaction[]
+
+  @@index([userId])
+  @@index([userId, name])
+  @@map("bank_accounts")
+}
+
+model Transaction {
+  id          String      @id @default(cuid())
+  userId      String
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountId   String
+  account     BankAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  amount      Float
+  type        String      @default("EXPENSE")
+  date        DateTime    @default(now())
+  description String
+  category    String      @default("other_expense")
+  labels      String[]    @default([])
+  notes       String?     @default("")
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([userId, date])
+  @@index([userId, accountId])
+  @@map("transactions")
+}
+
+model Category {
+  id         String   @id @default(cuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String
+  slug       String
+  type       String   @default("EXPENSE")
+  icon       String   @default("Tag")
+  color      String   @default("#3B82F6")
+  isCustom   Boolean  @default(false)
+  isArchived Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([userId, slug])
+  @@map("categories")
+}
+
+model Label {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  color     String   @default("#6B7280")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, name])
+  @@map("labels")
+}
+
+model Goal {
+  id            String    @id @default(cuid())
+  title         String
+  description   String?
+  targetAmount  Float
+  currentAmount Float     @default(0)
+  category      String    @default("general")
+  icon          String?   @default("🎯")
+  deadline      DateTime?
+  creatorId     String
+  creator       User      @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  isShared      Boolean   @default(false)
+  status        String    @default("active")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  members GoalMember[]
+
+  @@index([creatorId])
+  @@index([status])
+  @@map("goals")
+}
+
+model GoalMember {
+  id               String   @id @default(cuid())
+  goalId           String
+  goal             Goal     @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role             String   @default("member")
+  status           String   @default("accepted")
+  totalContributed Float    @default(0)
+  joinedAt         DateTime @default(now())
+
+  @@unique([goalId, userId])
+  @@map("goal_members")
+}
+
+model Friendship {
+  id                String   @id @default(cuid())
+  requesterId       String
+  requester         User     @relation("SentFriendships", fields: [requesterId], references: [id], onDelete: Cascade)
+  recipientId       String
+  recipient         User     @relation("ReceivedFriendships", fields: [recipientId], references: [id], onDelete: Cascade)
+  status            String   @default("pending")
+  requesterRelType  String   @default("friend")
+  requesterNickname String?
+  recipientRelType  String   @default("friend")
+  recipientNickname String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([requesterId, recipientId])
+  @@map("friendships")
+}
+
+model Notification {
+  id          String   @id @default(cuid())
+  recipientId String
+  recipient   User     @relation("ReceivedNotifications", fields: [recipientId], references: [id], onDelete: Cascade)
+  senderId    String?
+  sender      User?    @relation("SentNotifications", fields: [senderId], references: [id], onDelete: SetNull)
+  type        String
+  title       String
+  message     String
+  data        String?
+  isRead      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([recipientId])
+  @@index([isRead])
+  @@map("notifications")
+}
