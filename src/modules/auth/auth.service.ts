@@ -1,24 +1,7 @@
-import mongoose from "mongoose";
+import { prisma } from "../../db";
 import { hashPassword, verifyPassword } from "../../utils/password";
 
-type UserModel = {
-  findOne: (filter: any) => Promise<any | null>;
-  create: (data: any) => Promise<any>;
-  findById: (id: string) => { select: (field: string) => Promise<any | null> };
-};
-
 export class AuthService {
-  constructor(private readonly userModel?: UserModel) { }
-
-  private async getUserModel(): Promise<UserModel> {
-    if (this.userModel) {
-      return this.userModel;
-    }
-
-    const { User } = await import("../../db/models/user.model");
-    return User as unknown as UserModel;
-  }
-
   async register(data: {
     name: string;
     email: string;
@@ -27,10 +10,11 @@ export class AuthService {
   }) {
     const normalizedEmail = data.email.toLowerCase().trim();
     const normalizedUsername = data.username.toLowerCase().trim();
-    const User = await this.getUserModel();
 
-    const existingUser = await User.findOne({
-      $or: [{ email: normalizedEmail }, { username: normalizedUsername }],
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        OR: [{ email: normalizedEmail }, { username: normalizedUsername }],
+      },
     });
 
     if (existingUser) {
@@ -44,31 +28,21 @@ export class AuthService {
 
     const hashedPassword = await hashPassword(data.password);
 
-    try {
-      const user = await User.create({
+    const user = await prisma.user.create({
+      data: {
         name: data.name.trim(),
         email: normalizedEmail,
         username: normalizedUsername,
         password: hashedPassword,
-      });
+      },
+    });
 
-      return {
-        id: user._id.toString(),
-        name: user.name,
-        email: user.email,
-        username: user.username,
-      };
-    } catch (error: any) {
-      if (error.code === 11000) {
-        const field = Object.keys(error.keyPattern || {})[0];
-        throw new Error(
-          field === "email"
-            ? "Email is already registered"
-            : "Username is already taken"
-        );
-      }
-      throw error;
-    }
+    return {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      username: user.username,
+    };
   }
 
   async login(data: {
@@ -85,12 +59,13 @@ export class AuthService {
       throw new Error("Invalid email/username or password");
     }
 
-    const User = await this.getUserModel();
-    const user = await User.findOne({
-      $or: [{ email: identifier }, { username: identifier }],
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [{ email: identifier }, { username: identifier }],
+      },
     });
 
-    if (!user) {
+    if (!user || !user.password) {
       throw new Error("Invalid email/username or password");
     }
 
@@ -100,7 +75,7 @@ export class AuthService {
     }
 
     return {
-      id: user._id.toString(),
+      id: user.id,
       name: user.name,
       email: user.email,
       username: user.username,
@@ -108,15 +83,23 @@ export class AuthService {
   }
 
   async getUserById(id: string) {
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      throw new Error("Invalid user ID format");
-    }
+    const user = await prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        username: true,
+        image: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
 
-    const User = await this.getUserModel();
-    const user = await User.findById(id).select("-password");
     if (!user) {
       throw new Error("User not found");
     }
+
     return user;
   }
 }
