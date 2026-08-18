@@ -6,7 +6,13 @@ export const CreateAccountDto = t.Object({
   accountType: t.Enum(AccountType),
   providerType: t.Enum(ProviderType),
   providerName: t.String({ minLength: 1, maxLength: 100 }),
-  balance: t.Optional(t.Number({ default: 0 })),
+  balance: t.Optional(
+    t.Number({
+      minimum: 0,
+      error: "Nominal saldo tidak boleh bernilai negatif (minimal 0)",
+      default: 0,
+    })
+  ),
   currency: t.Optional(t.String({ default: "IDR" })),
   color: t.Optional(t.String()),
   isDefault: t.Optional(t.Boolean({ default: false })),
