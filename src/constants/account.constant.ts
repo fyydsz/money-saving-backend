@@ -1,8 +1,9 @@
 export enum AccountType {
   SAVINGS = "SAVINGS", // Savings
   CREDIT_CARD = "CREDIT_CARD", // Credit Card
-  DEPOSIT = "DEPOSIT", // Time Deposit
+  TIME_DEPOSIT = "TIME_DEPOSIT", // Time Deposit
   INVESTMENT = "INVESTMENT", // Investment (Mutual Funds, Stocks, etc.)
+  LOAN = "LOAN", // Loan
   PAYLATER = "PAYLATER", // PayLater
   CASH = "CASH", // Cash
   OTHER = "OTHER", // Other
@@ -17,16 +18,16 @@ export enum ProviderType {
 
 export const POPULAR_BANKS = [
   "BCA",
-  "Bank Mandiri",
+  "Mandiri",
   "BRI",
   "BNI",
-  "BSI (Bank Syariah Indonesia)",
-  "Bank Jago",
+  "BSI",
+  "Jago",
   "Blu by BCA Digital",
   "SeaBank",
   "CIMB Niaga",
-  "Bank Permata",
-  "Bank Danamon",
+  "Permata",
+  "Danamon",
   "BTN",
   "Jenius (BTPN)",
   "OCBC NISP",
