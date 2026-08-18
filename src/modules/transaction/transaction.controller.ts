@@ -81,12 +81,16 @@ export const transactionController = new Elysia({ prefix: "/transactions" })
           body: UpdateTransactionDto,
         }
       )
-      .delete("/:id", async ({ user, params: { id }, set }: any) => {
-        try {
-          return await service.deleteTransaction(user.id, id);
-        } catch (err: any) {
-          set.status = 400;
-          return { error: err.message };
+      .delete(
+        "/:id",
+        async ({ user, params: { id }, query, set }: any) => {
+          try {
+            const adjust = query?.adjustBalance !== "false" && query?.adjustBalance !== false;
+            return await service.deleteTransaction(user.id, id, adjust);
+          } catch (err: any) {
+            set.status = 400;
+            return { error: err.message };
+          }
         }
-      })
+      )
   );

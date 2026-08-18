@@ -152,8 +152,10 @@ export class TransactionService {
       }
     }
 
+    const shouldAdjustBalance = data.adjustBalance !== false;
+
     // 4. Create transaction & adjust balance atomically
-    const [savedTransaction] = await prisma.$transaction([
+    const operations: any[] = [
       prisma.transaction.create({
         data: {
           userId,
@@ -178,11 +180,18 @@ export class TransactionService {
           },
         },
       }),
-      prisma.bankAccount.update({
-        where: { id: account.id },
-        data: { balance: { increment: amount } },
-      }),
-    ]);
+    ];
+
+    if (shouldAdjustBalance) {
+      operations.push(
+        prisma.bankAccount.update({
+          where: { id: account.id },
+          data: { balance: { increment: amount } },
+        })
+      );
+    }
+
+    const [savedTransaction] = await prisma.$transaction(operations);
 
     return savedTransaction;
   }
@@ -290,7 +299,8 @@ export class TransactionService {
 
   async deleteTransaction(
     userId: string,
-    id: string
+    id: string,
+    adjustBalance: boolean = true
   ): Promise<{ success: boolean; message: string }> {
     const transaction = await prisma.transaction.findFirst({
       where: { id, userId },
@@ -299,19 +309,26 @@ export class TransactionService {
       throw new Error("Transaction not found");
     }
 
-    await prisma.$transaction([
-      prisma.bankAccount.update({
-        where: { id: transaction.accountId },
-        data: { balance: { decrement: transaction.amount } },
-      }),
+    const ops: any[] = [
       prisma.transaction.delete({
         where: { id },
       }),
-    ]);
+    ];
+
+    if (adjustBalance !== false) {
+      ops.unshift(
+        prisma.bankAccount.update({
+          where: { id: transaction.accountId },
+          data: { balance: { decrement: transaction.amount } },
+        })
+      );
+    }
+
+    await prisma.$transaction(ops);
 
     return {
       success: true,
-      message: "Transaction deleted successfully and account balance adjusted",
+      message: "Transaction deleted successfully",
     };
   }
 
