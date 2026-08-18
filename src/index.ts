@@ -26,11 +26,7 @@ const port = process.env.PORT ? parseInt(process.env.PORT) : 8000;
 const app = new Elysia()
   .use(
     cors({
-      origin: [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://192.168.1.9:3000",
-      ],
+      origin: true,
       credentials: true,
       allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
       exposeHeaders: ["Set-Cookie"],
