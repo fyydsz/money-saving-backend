@@ -1,4 +1,5 @@
 import { prisma } from "../db";
+import { logger } from "./logger";
 
 /**
  * Deletes expired sessions and verification tokens from the database.
@@ -26,12 +27,12 @@ export async function cleanExpiredSessions() {
 
     const totalCleaned = deletedSessions.count + deletedVerifications.count;
     if (totalCleaned > 0) {
-      console.log(
+      logger.info(
         `🧹 Auto-cleanup: Removed ${deletedSessions.count} expired sessions and ${deletedVerifications.count} expired verifications`
       );
     }
   } catch (error) {
-    console.error("❌ Auto-cleanup error:", error);
+    logger.error("❌ Auto-cleanup error:", error);
   }
 }
 
