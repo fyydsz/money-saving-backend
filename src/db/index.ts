@@ -1,6 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
+import { logger } from "../utils/logger";
 
 declare global {
   var prisma: PrismaClient | undefined;
@@ -35,11 +36,11 @@ if (process.env.NODE_ENV !== "production") {
 
 export const connectDB = async () => {
   try {
-    console.log("🔗 Connecting to PostgreSQL (Supabase)...");
+    logger.info("🔗 Connecting to PostgreSQL (Supabase)...");
     await prisma.$connect();
-    console.log("🐘 PostgreSQL (Supabase) connected successfully");
+    logger.info("🐘 PostgreSQL (Supabase) connected successfully");
   } catch (error) {
-    console.error("❌ PostgreSQL connection error:", error);
+    logger.error("❌ PostgreSQL connection error:", error);
   }
 };
 
