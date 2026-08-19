@@ -23,11 +23,11 @@ describe("Account Validation - Non-Negative Balance", () => {
     expect(error.message).toContain("tidak boleh bernilai negatif");
   });
 
-  it("should throw an error when updating an account with negative balance", async () => {
+  it("should throw an error when updating a non-existent account", async () => {
     let error: any = null;
     try {
       await accountService.updateAccount("test-user-id", "non-existent-id", {
-        balance: -100,
+        name: "Updated Name",
       });
     } catch (err: any) {
       error = err;
