@@ -33,7 +33,13 @@ export class AuthService {
         name: data.name.trim(),
         email: normalizedEmail,
         username: normalizedUsername,
-        password: hashedPassword,
+        accounts: {
+          create: {
+            accountId: normalizedEmail,
+            providerId: "credential",
+            password: hashedPassword,
+          },
+        },
       },
     });
 
@@ -63,13 +69,20 @@ export class AuthService {
       where: {
         OR: [{ email: identifier }, { username: identifier }],
       },
+      include: {
+        accounts: true,
+      },
     });
 
-    if (!user || !user.password) {
+    const credentialAccount = user?.accounts.find(
+      (acc) => acc.providerId === "credential"
+    );
+
+    if (!user || !credentialAccount || !credentialAccount.password) {
       throw new Error("Invalid email/username or password");
     }
 
-    const isMatch = await verifyPassword(data.password, user.password);
+    const isMatch = await verifyPassword(data.password, credentialAccount.password);
     if (!isMatch) {
       throw new Error("Invalid email/username or password");
     }
