@@ -11,6 +11,8 @@ import { notificationController } from "./modules/notification/notification.cont
 import { authGuard } from "./plugins/auth.plugin";
 import { AuthService } from "./modules/auth/auth.service";
 import { betterAuthPlugin } from "./plugins/better-auth.plugin";
+import { loggerPlugin } from "./plugins/logger.plugin";
+import { logger } from "./utils/logger";
 import { auth } from "./auth";
 import { startSessionCleanupTask } from "./utils/cleanup";
 
@@ -24,6 +26,8 @@ const authService = new AuthService();
 const port = process.env.PORT ? parseInt(process.env.PORT) : 8000;
 
 const app = new Elysia()
+  // Request logger plugin — must be first to capture all incoming requests
+  .use(loggerPlugin)
   .use(
     cors({
       origin: true,
@@ -80,4 +84,4 @@ const app = new Elysia()
     hostname: "0.0.0.0",
   });
 
-console.log(`🦊 Server running at http://${app.server?.hostname}:${app.server?.port}`);
+logger.info(`🦊 Server running at http://${app.server?.hostname}:${app.server?.port}`);
