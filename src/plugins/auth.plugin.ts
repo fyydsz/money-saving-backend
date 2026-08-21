@@ -51,14 +51,16 @@ export const authGuard = new Elysia({ name: "authGuard" })
       } as AuthUser,
     };
   })
-  .macro(({ onBeforeHandle }) => ({
+  .macro({
     isAuth(enabled: boolean) {
-      if (!enabled) return;
-      onBeforeHandle(({ user, set }: any) => {
-        if (!user) {
-          set.status = 401;
-          return { error: "Unauthorized access, please login first" };
-        }
-      });
+      if (!enabled) return {};
+      return {
+        beforeHandle({ user, set }: any) {
+          if (!user) {
+            set.status = 401;
+            return { error: "Unauthorized access, please login first" };
+          }
+        },
+      };
     },
-  }));
+  });
