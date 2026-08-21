@@ -2,8 +2,8 @@ module.exports = {
   apps: [
     {
       name: "vaultin-backend",
-      script: "src/index.ts",
-      interpreter: "bun",
+      script: "bun",
+      args: "run src/index.ts",
       env: {
         NODE_ENV: "production",
         PORT: 8000,
