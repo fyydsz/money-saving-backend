@@ -183,6 +183,9 @@ export class TransactionService {
     ];
 
     if (shouldAdjustBalance) {
+      if (account.balance + amount < 0) {
+        throw new Error("Nominal saldo tidak boleh bernilai negatif (saldo tidak mencukupi)");
+      }
       operations.push(
         prisma.bankAccount.update({
           where: { id: account.id },
@@ -269,28 +272,44 @@ export class TransactionService {
       }),
     ];
 
+    const shouldAdjustBalance = data.adjustBalance !== false;
+
     // Adjust balances
-    if (oldAccountId === targetAccountId) {
-      const delta = newAmount - oldAmount;
-      if (delta !== 0) {
+    if (shouldAdjustBalance) {
+      if (oldAccountId === targetAccountId) {
+        const delta = newAmount - oldAmount;
+        if (delta !== 0) {
+          if (targetAccount.balance + delta < 0) {
+            throw new Error("Nominal saldo tidak boleh bernilai negatif (saldo tidak mencukupi)");
+          }
+          operations.push(
+            prisma.bankAccount.update({
+              where: { id: oldAccountId },
+              data: { balance: { increment: delta } },
+            })
+          );
+        }
+      } else {
+        const oldAccount = await prisma.bankAccount.findFirst({
+          where: { id: oldAccountId, userId },
+        });
+        if (!oldAccount) {
+          throw new Error("Source account not found");
+        }
+        if (oldAccount.balance - oldAmount < 0 || targetAccount.balance + newAmount < 0) {
+          throw new Error("Nominal saldo tidak boleh bernilai negatif (saldo tidak mencukupi)");
+        }
         operations.push(
           prisma.bankAccount.update({
             where: { id: oldAccountId },
-            data: { balance: { increment: delta } },
+            data: { balance: { decrement: oldAmount } },
+          }),
+          prisma.bankAccount.update({
+            where: { id: targetAccountId },
+            data: { balance: { increment: newAmount } },
           })
         );
       }
-    } else {
-      operations.push(
-        prisma.bankAccount.update({
-          where: { id: oldAccountId },
-          data: { balance: { decrement: oldAmount } },
-        }),
-        prisma.bankAccount.update({
-          where: { id: targetAccountId },
-          data: { balance: { increment: newAmount } },
-        })
-      );
     }
 
     const [updatedTx] = await prisma.$transaction(operations);

@@ -22,6 +22,7 @@ export const UpdateTransactionDto = t.Object({
   category: t.Optional(t.String({ minLength: 1 })),
   labels: t.Optional(t.Array(t.String())),
   notes: t.Optional(t.String()),
+  adjustBalance: t.Optional(t.Boolean({ default: true })),
 });
 
 export const TransactionQueryDto = t.Object({
