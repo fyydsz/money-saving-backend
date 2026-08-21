@@ -3,25 +3,24 @@ import { prismaAdapter } from "@better-auth/prisma-adapter";
 import { username } from "better-auth/plugins";
 import { prisma } from "./db";
 
+const allowedOrigins = [
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  "http://localhost:8000",
+  "https://vaultin.web.id",
+  "https://www.vaultin.web.id",
+  "https://preview.vaultin.web.id",
+];
+
+if (process.env.FRONTEND_URL) {
+  allowedOrigins.push(process.env.FRONTEND_URL);
+}
+
 export const auth = betterAuth({
   secret: process.env.BETTER_AUTH_SECRET,
-  baseURL: process.env.BETTER_AUTH_URL || "http://localhost:8000",
+  baseURL: process.env.BETTER_AUTH_URL || "https://api.vaultin.web.id",
   basePath: "/api/auth",
-  trustedOrigins: (request) => {
-    const origin = request?.headers?.get("origin");
-    const origins = [
-      "http://localhost:3000",
-      "http://127.0.0.1:3000",
-      "http://localhost:8000",
-      "https://vaultin.web.id",
-      "https://www.vaultin.web.id",
-      "https://preview.vaultin.web.id",
-    ];
-    if (origin && !origins.includes(origin)) {
-      origins.push(origin);
-    }
-    return origins;
-  },
+  trustedOrigins: allowedOrigins,
   database: prismaAdapter(prisma, {
     provider: "postgresql",
   }),

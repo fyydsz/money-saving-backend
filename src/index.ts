@@ -25,6 +25,15 @@ startSessionCleanupTask();
 const authService = new AuthService();
 const port = process.env.PORT ? parseInt(process.env.PORT) : 8000;
 
+const allowedOrigins = [
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  "http://localhost:8000",
+  "https://vaultin.web.id",
+  "https://www.vaultin.web.id",
+  "https://preview.vaultin.web.id",
+];
+
 const app = new Elysia()
   // Request logger plugin — must be first to capture all incoming requests
   .use(loggerPlugin)
@@ -32,10 +41,11 @@ const app = new Elysia()
     cors({
       origin: (request) => {
         const origin = request.headers.get("origin");
-        return origin || true;
+        if (!origin) return true;
+        return allowedOrigins.includes(origin) ? origin : true;
       },
       credentials: true,
-      allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
+      allowedHeaders: ["Content-Type", "Authorization", "Cookie", "X-Requested-With"],
       exposeHeaders: ["Set-Cookie"],
       methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     })
