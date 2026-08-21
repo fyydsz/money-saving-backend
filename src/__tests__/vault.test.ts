@@ -1,15 +1,15 @@
 import { describe, it, expect } from "bun:test";
-import { AccountService } from "../modules/account/account.service";
+import { VaultService } from "../modules/vault/vault.service";
 import { AccountType, ProviderType } from "../constants/account.constant";
 
-describe("Account Validation - Non-Negative Balance", () => {
-  const accountService = new AccountService();
+describe("Vault Validation - Non-Negative Balance", () => {
+  const vaultService = new VaultService();
 
   it("should throw an error when creating an account with negative balance", async () => {
     let error: any = null;
     try {
-      await accountService.createAccount("test-user-id", {
-        name: "Test Account",
+      await vaultService.createVault("test-user-id", {
+        name: "Test Vault",
         accountType: AccountType.SAVINGS,
         providerType: ProviderType.BANK,
         providerName: "BCA",
@@ -26,7 +26,7 @@ describe("Account Validation - Non-Negative Balance", () => {
   it("should throw an error when updating a non-existent account", async () => {
     let error: any = null;
     try {
-      await accountService.updateAccount("test-user-id", "non-existent-id", {
+      await vaultService.updateVault("test-user-id", "non-existent-id", {
         name: "Updated Name",
       });
     } catch (err: any) {
@@ -36,3 +36,4 @@ describe("Account Validation - Non-Negative Balance", () => {
     expect(error).not.toBeNull();
   });
 });
+

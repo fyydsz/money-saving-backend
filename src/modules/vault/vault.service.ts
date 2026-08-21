@@ -5,7 +5,7 @@ import {
   POPULAR_BANKS,
   POPULAR_EWALLETS,
 } from "../../constants/account.constant";
-import { CreateAccountInput, UpdateAccountInput } from "./account.dto";
+import { CreateVaultInput, UpdateVaultInput } from "./vault.dto";
 import type { BankAccount } from "@prisma/client";
 
 const MONTH_NAMES = [
@@ -153,14 +153,14 @@ function calculateMonthlyStats(
   return result;
 }
 
-export class AccountService {
-  async getUserAccounts(userId: string) {
+export class VaultService {
+  async getUserVaults(userId: string) {
     const sixMonthsAgo = new Date();
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 5);
     sixMonthsAgo.setDate(1);
     sixMonthsAgo.setHours(0, 0, 0, 0);
 
-    const accounts = await prisma.bankAccount.findMany({
+    const vaults = await prisma.bankAccount.findMany({
       where: { userId },
       include: {
         transactions: {
@@ -178,7 +178,7 @@ export class AccountService {
       orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }],
     });
 
-    const accountsWithStats = accounts.map((acc) => {
+    const vaultsWithStats = vaults.map((acc) => {
       const { transactions, ...accData } = acc;
       const monthlyStats = calculateMonthlyStats(
         acc.balance || 0,
@@ -192,14 +192,14 @@ export class AccountService {
     });
 
     // Calculate summary statistics
-    const totalBalance = accountsWithStats.reduce(
+    const totalBalance = vaultsWithStats.reduce(
       (sum, acc) => sum + (acc.balance || 0),
       0
     );
-    const count = accountsWithStats.length;
+    const count = vaultsWithStats.length;
 
     return {
-      accounts: accountsWithStats,
+      vaults: vaultsWithStats,
       summary: {
         totalBalance,
         count,
@@ -207,7 +207,7 @@ export class AccountService {
     };
   }
 
-  async getAccountById(
+  async getVaultById(
     userId: string,
     accountId: string
   ): Promise<any> {
@@ -216,7 +216,7 @@ export class AccountService {
     sixMonthsAgo.setDate(1);
     sixMonthsAgo.setHours(0, 0, 0, 0);
 
-    const account = await prisma.bankAccount.findFirst({
+    const vault = await prisma.bankAccount.findFirst({
       where: { id: accountId, userId },
       include: {
         transactions: {
@@ -233,13 +233,13 @@ export class AccountService {
       },
     });
 
-    if (!account) {
-      throw new Error("Account not found or access denied");
+    if (!vault) {
+      throw new Error("Vault not found or access denied");
     }
 
-    const { transactions, ...accData } = account;
+    const { transactions, ...accData } = vault;
     const monthlyStats = calculateMonthlyStats(
-      account.balance || 0,
+      vault.balance || 0,
       transactions || []
     );
 
@@ -250,22 +250,22 @@ export class AccountService {
     };
   }
 
-  async createAccount(
+  async createVault(
     userId: string,
-    data: CreateAccountInput
+    data: CreateVaultInput
   ): Promise<BankAccount> {
     if (data.balance !== undefined && data.balance < 0) {
       throw new Error("Nominal saldo tidak boleh bernilai negatif (minimal 0)");
     }
 
-    // If set as default, reset other accounts
+    // If set as default, reset other vaults
     if (data.isDefault) {
       await prisma.bankAccount.updateMany({
         where: { userId },
         data: { isDefault: false },
       });
     } else {
-      // If this is the first account, set as default automatically
+      // If this is the first vault, set as default automatically
       const existingCount = await prisma.bankAccount.count({
         where: { userId },
       });
@@ -289,12 +289,12 @@ export class AccountService {
     });
   }
 
-  async updateAccount(
+  async updateVault(
     userId: string,
     accountId: string,
-    data: UpdateAccountInput
+    data: UpdateVaultInput
   ): Promise<BankAccount> {
-    await this.getAccountById(userId, accountId);
+    await this.getVaultById(userId, accountId);
 
     if (data.isDefault) {
       await prisma.bankAccount.updateMany({
@@ -321,11 +321,11 @@ export class AccountService {
     });
   }
 
-  async deleteAccount(
+  async deleteVault(
     userId: string,
     accountId: string
   ): Promise<{ success: boolean; message: string }> {
-    await this.getAccountById(userId, accountId);
+    await this.getVaultById(userId, accountId);
 
     // Delete all transactions associated with this account
     await prisma.transaction.deleteMany({
@@ -338,16 +338,18 @@ export class AccountService {
 
     return {
       success: true,
-      message: "Account and associated transaction history deleted successfully",
+      message: "Vault and associated transaction history deleted successfully",
     };
   }
 
   getPresets() {
     return {
-      accountTypes: Object.values(AccountType),
+      vaultTypes: Object.values(AccountType),
       providerTypes: Object.values(ProviderType),
       popularBanks: POPULAR_BANKS,
       popularEWallets: POPULAR_EWALLETS,
     };
   }
 }
+
+

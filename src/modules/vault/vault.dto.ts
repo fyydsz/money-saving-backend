@@ -1,7 +1,7 @@
 import { t } from "elysia";
 import { AccountType, ProviderType } from "../../constants/account.constant";
 
-export const CreateAccountDto = t.Object({
+export const CreateVaultDto = t.Object({
   name: t.String({ minLength: 1, maxLength: 100 }),
   accountType: t.Enum(AccountType),
   providerType: t.Enum(ProviderType),
@@ -18,7 +18,7 @@ export const CreateAccountDto = t.Object({
   isDefault: t.Optional(t.Boolean({ default: false })),
 });
 
-export const UpdateAccountDto = t.Object({
+export const UpdateVaultDto = t.Object({
   name: t.Optional(t.String({ minLength: 1, maxLength: 100 })),
   accountType: t.Optional(t.Enum(AccountType)),
   providerType: t.Optional(t.Enum(ProviderType)),
@@ -28,5 +28,5 @@ export const UpdateAccountDto = t.Object({
   isDefault: t.Optional(t.Boolean()),
 });
 
-export type CreateAccountInput = typeof CreateAccountDto.static;
-export type UpdateAccountInput = typeof UpdateAccountDto.static;
+export type CreateVaultInput = typeof CreateVaultDto.static;
+export type UpdateVaultInput = typeof UpdateVaultDto.static;

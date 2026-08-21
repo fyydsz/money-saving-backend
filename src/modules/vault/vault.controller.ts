@@ -1,16 +1,16 @@
 import { Elysia, t } from "elysia";
 import { authGuard } from "../../plugins/auth.plugin";
-import { AccountService } from "./account.service";
-import { CreateAccountDto, UpdateAccountDto } from "./account.dto";
+import { VaultService } from "./vault.service";
+import { CreateVaultDto, UpdateVaultDto } from "./vault.dto";
 
-const accountService = new AccountService();
+const vaultService = new VaultService();
 
-export const accountController = new Elysia({ prefix: "/accounts" })
+export const vaultController = new Elysia({ prefix: "/vaults" })
   .use(authGuard)
   // Presets endpoint (public/authenticated)
   .get("/presets", () => {
     return {
-      presets: accountService.getPresets(),
+      presets: vaultService.getPresets(),
     };
   })
   // Protected endpoints
@@ -18,7 +18,7 @@ export const accountController = new Elysia({ prefix: "/accounts" })
     app
       .get("/", async ({ user, set }: any) => {
         try {
-          const result = await accountService.getUserAccounts(user.id);
+          const result = await vaultService.getUserVaults(user.id);
           return result;
         } catch (err: any) {
           set.status = 400;
@@ -27,8 +27,8 @@ export const accountController = new Elysia({ prefix: "/accounts" })
       })
       .get("/:id", async ({ user, params: { id }, set }: any) => {
         try {
-          const account = await accountService.getAccountById(user.id, id);
-          return { account };
+          const vault = await vaultService.getVaultById(user.id, id);
+          return { vault };
         } catch (err: any) {
           set.status = 404;
           return { error: err.message };
@@ -38,11 +38,11 @@ export const accountController = new Elysia({ prefix: "/accounts" })
         "/",
         async ({ user, body, set }: any) => {
           try {
-            const account = await accountService.createAccount(user.id, body);
+            const vault = await vaultService.createVault(user.id, body);
             set.status = 201;
             return {
-              message: "Account created successfully",
-              account,
+              message: "Vault created successfully",
+              vault,
             };
           } catch (err: any) {
             set.status = 400;
@@ -50,17 +50,17 @@ export const accountController = new Elysia({ prefix: "/accounts" })
           }
         },
         {
-          body: CreateAccountDto,
+          body: CreateVaultDto,
         }
       )
       .put(
         "/:id",
         async ({ user, params: { id }, body, set }: any) => {
           try {
-            const account = await accountService.updateAccount(user.id, id, body);
+            const vault = await vaultService.updateVault(user.id, id, body);
             return {
-              message: "Account updated successfully",
-              account,
+              message: "Vault updated successfully",
+              vault,
             };
           } catch (err: any) {
             set.status = 400;
@@ -68,12 +68,12 @@ export const accountController = new Elysia({ prefix: "/accounts" })
           }
         },
         {
-          body: UpdateAccountDto,
+          body: UpdateVaultDto,
         }
       )
       .delete("/:id", async ({ user, params: { id }, set }: any) => {
         try {
-          const result = await accountService.deleteAccount(user.id, id);
+          const result = await vaultService.deleteVault(user.id, id);
           return result;
         } catch (err: any) {
           set.status = 400;
