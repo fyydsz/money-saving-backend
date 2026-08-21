@@ -2,7 +2,7 @@ import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { connectDB } from "./db";
 import { authController } from "./modules/auth/auth.controller";
-import { accountController } from "./modules/account/account.controller";
+import { vaultController } from "./modules/vault/vault.controller";
 import { categoryLabelController } from "./modules/category-label/category-label.controller";
 import { transactionController } from "./modules/transaction/transaction.controller";
 import { socialController } from "./modules/social/social.controller";
@@ -44,7 +44,7 @@ const app = new Elysia()
   // Auth guard for protected routes
   .use(authGuard)
   // Money Saving Modules
-  .use(accountController)
+  .use(vaultController)
   .use(categoryLabelController)
   .use(transactionController)
   .use(socialController)
