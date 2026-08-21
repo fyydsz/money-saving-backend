@@ -16,6 +16,8 @@ if (process.env.FRONTEND_URL) {
   allowedOrigins.push(process.env.FRONTEND_URL);
 }
 
+const isProd = process.env.NODE_ENV === "production";
+
 export const auth = betterAuth({
   secret: process.env.BETTER_AUTH_SECRET,
   baseURL: process.env.BETTER_AUTH_URL || "https://api.vaultin.web.id",
@@ -39,12 +41,17 @@ export const auth = betterAuth({
     },
   },
   advanced: {
-    useSecureCookies: process.env.NODE_ENV === "production",
+    crossSubDomainCookies: {
+      enabled: isProd,
+      domain: isProd ? ".vaultin.web.id" : undefined,
+    },
+    useSecureCookies: isProd,
     defaultCookieAttributes: {
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
+      secure: isProd,
+      sameSite: isProd ? "none" : "lax",
       httpOnly: true,
       path: "/",
+      domain: isProd ? ".vaultin.web.id" : undefined,
     },
   },
 });
