@@ -3,7 +3,11 @@
   "version": "1.0.50",
   "scripts": {
     "test": "bun test",
-    "dev": "bun run --watch src/index.ts"
+    "dev": "bun run --watch src/index.ts",
+    "start": "pm2 start ecosystem.config.cjs",
+    "pm2:start": "pm2 start ecosystem.config.cjs",
+    "pm2:restart": "pm2 restart ecosystem.config.cjs",
+    "pm2:logs": "pm2 logs vaultin-backend"
   },
   "dependencies": {
     "@better-auth/prisma-adapter": "^1.6.29",
