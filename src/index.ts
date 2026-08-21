@@ -39,11 +39,7 @@ const app = new Elysia()
   .use(loggerPlugin)
   .use(
     cors({
-      origin: (request) => {
-        const origin = request.headers.get("origin");
-        if (!origin) return true;
-        return allowedOrigins.includes(origin) ? origin : true;
-      },
+      origin: true,
       credentials: true,
       allowedHeaders: ["Content-Type", "Authorization", "Cookie", "X-Requested-With"],
       exposeHeaders: ["Set-Cookie"],
