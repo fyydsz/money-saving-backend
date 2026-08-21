@@ -56,8 +56,7 @@ export class Logger {
   }
 
   private formatMessage(levelTag: string, message: string): string {
-    const time = `${LOG_COLORS.gray}${formatTimestamp()}${LOG_COLORS.reset}`;
-    return `${time} ${levelTag} ${message}`;
+    return `${levelTag} ${message}`;
   }
 
   public debug(message: any, ...optionalParams: any[]) {
