@@ -52,7 +52,7 @@ const app = new Elysia()
   .use(authController)
   // Auth guard for protected routes
   .use(authGuard)
-  // Money Saving Modules
+  // Vaultin Modules
   .use(vaultController)
   .use(categoryLabelController)
   .use(transactionController)
